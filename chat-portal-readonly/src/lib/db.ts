@@ -22,9 +22,15 @@ export function getPool() {
     password,
     database,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: Number(process.env.DB_POOL_SIZE ?? "20"), // Increased default
+    queueLimit: 0, // Unlimited queue
     enableKeepAlive: true,
-    dateStrings: false
+    keepAliveInitialDelay: 0,
+    dateStrings: false,
+    // Performance optimizations
+    multipleStatements: false,
+    supportBigNumbers: true,
+    bigNumberStrings: false
   });
 
   return pool;

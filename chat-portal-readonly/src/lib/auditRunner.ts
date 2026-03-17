@@ -2,7 +2,35 @@ import { query } from "@/lib/db";
 import { getChatMessagesColumns, pickAgentColumn } from "@/lib/schemaDetect";
 import ExcelJS from "exceljs";
 import { randomUUID } from "node:crypto";
-import { generateChatAudit } from "@/lib/geminiClient";
+
+// Support multiple providers: ollama, gemini, together (replicate/openrouter placeholders)
+const AUDIT_PROVIDER = (process.env.AUDIT_PROVIDER || "ollama").toLowerCase();
+
+// Lazy load the appropriate client
+async function getGenerateChatAudit() {
+  try {
+    switch (AUDIT_PROVIDER) {
+      case "ollama":
+        const { generateChatAudit: ollamaAudit } = await import("@/lib/ollamaClient");
+        return ollamaAudit;
+      case "together":
+        const { generateChatAudit: togetherAudit } = await import("@/lib/togetherClient");
+        return togetherAudit;
+      case "replicate":
+        throw new Error("Replicate client not implemented. Use 'together' provider instead.");
+      case "openrouter":
+        throw new Error("OpenRouter client not implemented. Use 'together' provider instead.");
+      default:
+        const { generateChatAudit: geminiAudit } = await import("@/lib/geminiClient");
+        return geminiAudit;
+    }
+  } catch (error: any) {
+    throw new Error(
+      `Failed to load ${AUDIT_PROVIDER} client: ${error?.message ?? String(error)}. ` +
+      `Make sure the client file exists and is properly configured.`
+    );
+  }
+}
 import {
   AuditJobState,
   appendNdjson,
@@ -37,7 +65,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function resolveGeminiModelSetting(): string {
+function resolveModelSetting(): string {
+  if (AUDIT_PROVIDER === "ollama") {
+    return process.env.OLLAMA_MODEL?.trim() || "llama3.2:3b";
+  }
   return (process.env.GEMINI_MODEL ?? "auto").trim() || "auto";
 }
 
@@ -64,14 +95,32 @@ async function isStopRequested(jobId: string): Promise<boolean> {
   return Boolean(st?.stop_requested || st?.status === "stopped");
 }
 
+// Cache column detection for audit runner (separate from schemaDetect cache)
+let cachedAuditColumns: { cols: Set<string>; agentCol: string | null; hasAccountType: boolean } | null = null;
+let cachedAuditTimestamp = 0;
+const AUDIT_COL_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+async function getAuditColumns() {
+  const now = Date.now();
+  if (cachedAuditColumns && (now - cachedAuditTimestamp) < AUDIT_COL_CACHE_TTL) {
+    return cachedAuditColumns;
+  }
+
+  const cols = await getChatMessagesColumns();
+  const agentCol = pickAgentColumn(cols);
+  const hasAccountType = cols.has("account_type");
+  
+  cachedAuditColumns = { cols, agentCol, hasAccountType };
+  cachedAuditTimestamp = now;
+  return cachedAuditColumns;
+}
+
 async function fetchTranscript(
   requestId: bigint,
   maxMessages: number,
   maxCharsPerMsg: number,
 ) {
-  const cols = await getChatMessagesColumns();
-  const agentCol = pickAgentColumn(cols);
-  const hasAccountType = cols.has("account_type");
+  const { cols, agentCol, hasAccountType } = await getAuditColumns();
 
   const selectCols = [
     "id",
@@ -119,12 +168,13 @@ async function fetchTranscript(
 }
 
 async function callAuditModel(params: {
-  model: string; // "auto" or specific gemini model
+  model: string;
   request_id: string;
   transcript: any[];
   temperature: number;
   maxOutputTokens: number;
 }) {
+  const generateChatAudit = await getGenerateChatAudit();
   const audit = await generateChatAudit(
     {
       chat_id: params.request_id,
@@ -139,7 +189,8 @@ async function callAuditModel(params: {
       model: params.model === "auto" ? undefined : params.model,
       temperature: params.temperature,
       maxOutputTokens: params.maxOutputTokens,
-      tryModelDiscovery: params.model === "auto",
+      // Only for Gemini
+      ...(AUDIT_PROVIDER === "gemini" && { tryModelDiscovery: params.model === "auto" }),
     },
   );
 
@@ -147,17 +198,74 @@ async function callAuditModel(params: {
 }
 
 export async function startAuditJob() {
-  const jobId = randomUUID();
-  await initJobFiles(jobId);
+  try {
+    // Prevent multiple concurrent jobs (optional - remove if you want parallel jobs)
+    const maxConcurrentJobs = envNum("AUDIT_MAX_CONCURRENT_JOBS", 1);
+    console.log(`AUDIT_MAX_CONCURRENT_JOBS env var: "${process.env.AUDIT_MAX_CONCURRENT_JOBS}", parsed as: ${maxConcurrentJobs}, running jobs: ${running.size}`);
 
-  const model = resolveGeminiModelSetting();
+    if (maxConcurrentJobs <= 0) {
+      throw new Error(`AUDIT_MAX_CONCURRENT_JOBS is set to ${maxConcurrentJobs}, which prevents any jobs from running. Set it to 1 or higher to allow jobs.`);
+    }
+
+    if (running.size >= maxConcurrentJobs) {
+      throw new Error(`Maximum concurrent jobs (${maxConcurrentJobs}) reached. Stop existing jobs first.`);
+    }
+
+    // Verify the provider is configured
+    if (AUDIT_PROVIDER === "ollama") {
+      const { checkOllamaHealth } = await import("@/lib/ollamaClient");
+      const health = await checkOllamaHealth();
+      if (!health.available) {
+        throw new Error(
+          `Ollama is not available: ${health.error}. ` +
+          `Make sure Ollama is running (ollama serve) and the model is installed (ollama pull ${health.model || "llama3.2:3b"}).`
+        );
+      }
+    } else if (AUDIT_PROVIDER === "together") {
+      const key = process.env.TOGETHER_API_KEY;
+      if (!key) {
+        throw new Error(
+          "Together AI API key is missing. Set TOGETHER_API_KEY in your environment. " +
+          "Get your key at: https://together.ai"
+        );
+      }
+    } else if (AUDIT_PROVIDER === "replicate") {
+      const key = process.env.REPLICATE_API_TOKEN;
+      if (!key) {
+        throw new Error(
+          "Replicate API token is missing. Set REPLICATE_API_TOKEN in your environment. " +
+          "Get your token at: https://replicate.com"
+        );
+      }
+    } else if (AUDIT_PROVIDER === "openrouter") {
+      const key = process.env.OPENROUTER_API_KEY;
+      if (!key) {
+        throw new Error(
+          "OpenRouter API key is missing. Set OPENROUTER_API_KEY in your environment. " +
+          "Get your key at: https://openrouter.ai"
+        );
+      }
+    } else if (AUDIT_PROVIDER === "gemini") {
+      // Check if Gemini API key is set
+      const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+      if (!key) {
+        throw new Error(
+          "Gemini API key is missing. Set GEMINI_API_KEY or GOOGLE_API_KEY in your environment."
+        );
+      }
+    }
+
+    const jobId = randomUUID();
+    await initJobFiles(jobId);
+
+    const model = resolveModelSetting();
 
   const state: AuditJobState = {
     job_id: jobId,
     status: "queued",
     created_at: nowIso(),
     model,
-    max_chats: envNum("AUDIT_MAX_CHATS", 100),
+    max_chats: envNum("AUDIT_MAX_CHATS", 5),
     stop_requested: false,
     processed: 0,
     success: 0,
@@ -168,25 +276,43 @@ export async function startAuditJob() {
 
   await writeState(jobId, state);
 
-  const p = runJob(jobId).catch(async (e) => {
-    const st = await readState(jobId);
-    if (st) {
-      st.status = "failed";
-      st.finished_at = nowIso();
-      st.last_error = String(e?.message ?? e);
-      st.recent_errors.unshift({ at: nowIso(), message: st.last_error });
-      st.recent_errors = st.recent_errors.slice(0, 50);
-      await writeState(jobId, st);
-    }
-  });
+  const p = runJob(jobId)
+    .catch(async (e) => {
+      const st = await readState(jobId);
+      if (st) {
+        st.status = "failed";
+        st.finished_at = nowIso();
+        st.last_error = String(e?.message ?? e);
+        st.recent_errors.unshift({ at: nowIso(), message: st.last_error });
+        st.recent_errors = st.recent_errors.slice(0, 50);
+        await writeState(jobId, st);
+      }
+    })
+    .finally(() => {
+      // Clean up running map when job completes
+      running.delete(jobId);
+    });
 
-  running.set(jobId, p);
-  return { job_id: jobId, model };
+    running.set(jobId, p);
+    return { job_id: jobId, model };
+  } catch (error: any) {
+    // Re-throw with more context
+    throw new Error(
+      `Failed to start audit job: ${error?.message ?? String(error)}. ` +
+      `Provider: ${AUDIT_PROVIDER}, Check your configuration.`
+    );
+  }
 }
 
 export async function stopAuditJob(jobId: string) {
   const st = await readState(jobId);
-  if (!st) return;
+  if (!st) {
+    throw new Error(`Job ${jobId} not found`);
+  }
+
+  if (st.status === "stopped" || st.status === "completed" || st.status === "failed") {
+    return; // Already stopped/completed
+  }
 
   st.stop_requested = true;
   st.status = "stopped";
@@ -196,6 +322,10 @@ export async function stopAuditJob(jobId: string) {
 
 export async function getAuditState(jobId: string) {
   return await readState(jobId);
+}
+
+export function getRunningJobIds(): string[] {
+  return Array.from(running.keys());
 }
 
 async function runJob(jobId: string) {
@@ -218,6 +348,10 @@ async function runJob(jobId: string) {
 
   st.total_estimate = ids.length;
   await writeState(jobId, st);
+
+  // Batch state updates - only write every N items or on critical events
+  const STATE_WRITE_INTERVAL = 10; // Write state every 10 items
+  let lastStateWrite = 0;
 
   for (const rid of ids) {
     if (await isStopRequested(jobId)) break;
@@ -252,7 +386,11 @@ async function runJob(jobId: string) {
           error: "Empty transcript",
         });
 
-        await writeState(jobId, st);
+        // Batch state writes
+        if (st.processed - lastStateWrite >= STATE_WRITE_INTERVAL) {
+          await writeState(jobId, st);
+          lastStateWrite = st.processed;
+        }
         continue;
       }
 
@@ -287,7 +425,11 @@ async function runJob(jobId: string) {
         audit,
       });
 
-      await writeState(jobId, st);
+      // Batch state writes
+      if (st.processed - lastStateWrite >= STATE_WRITE_INTERVAL) {
+        await writeState(jobId, st);
+        lastStateWrite = st.processed;
+      }
     } catch (e: any) {
       // Check for stop request even on error
       if (await isStopRequested(jobId)) {
@@ -312,7 +454,9 @@ async function runJob(jobId: string) {
         error: msg,
       });
 
+      // Always write state on errors to capture them immediately
       await writeState(jobId, st);
+      lastStateWrite = st.processed;
 
       // Gemini quota/rate-limit backoff: respect retryDelay if present
       const msgLower = msg.toLowerCase();
@@ -344,12 +488,20 @@ async function runJob(jobId: string) {
     }
   }
 
+  // Final state write to ensure all updates are persisted
+  st = await readState(jobId) ?? st;
+  if (st) {
+    await writeState(jobId, st);
+  }
+
   // If stopped, don't build excel
   if (await isStopRequested(jobId)) {
     st = (await readState(jobId)) ?? st;
-    st.status = "stopped";
-    st.finished_at = nowIso();
-    await writeState(jobId, st);
+    if (st) {
+      st.status = "stopped";
+      st.finished_at = nowIso();
+      await writeState(jobId, st);
+    }
     return;
   }
 
@@ -357,16 +509,22 @@ async function runJob(jobId: string) {
   await buildExcel(jobId);
 
   st = (await readState(jobId)) ?? st;
-  st.status = "completed";
-  st.finished_at = nowIso();
-  st.files.xlsx = xlsxPath(jobId);
-  await writeState(jobId, st);
+  if (st) {
+    st.status = "completed";
+    st.finished_at = nowIso();
+    st.files.xlsx = xlsxPath(jobId);
+    await writeState(jobId, st);
+  }
 }
 
 async function buildExcel(jobId: string) {
   const out = xlsxPath(jobId);
 
-  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: out });
+  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ 
+    filename: out,
+    useStyles: false, // Faster without styles
+    useSharedStrings: false // Faster without shared strings
+  });
   const wsSummary = workbook.addWorksheet("Summary");
   const ws = workbook.addWorksheet("Audits");
 
@@ -399,12 +557,23 @@ async function buildExcel(jobId: string) {
   ]).commit();
 
   const input = ndjsonPath(jobId);
-  if (!fs.existsSync(input)) throw new Error("Missing results.ndjson");
+  if (!fs.existsSync(input)) {
+    throw new Error(`Missing results.ndjson at ${input}`);
+  }
+
+  // Use streaming readline for better memory efficiency
+  const fileStream = fs.createReadStream(input, { 
+    encoding: "utf8",
+    highWaterMark: 64 * 1024 // 64KB chunks for better performance
+  });
 
   const rl = readline.createInterface({
-    input: fs.createReadStream(input, { encoding: "utf8" }),
+    input: fileStream,
     crlfDelay: Infinity,
   });
+
+  let rowCount = 0;
+  const BATCH_SIZE = 100; // Commit rows in batches for better performance
 
   for await (const line of rl) {
     const s = line.trim();
@@ -413,24 +582,32 @@ async function buildExcel(jobId: string) {
     let obj: any;
     try {
       obj = JSON.parse(s);
-    } catch {
+    } catch (e) {
+      // Log parse errors but continue
+      console.warn(`Failed to parse line in ${jobId}: ${String(e)}`);
       continue;
     }
 
     const audit = obj.audit ?? null;
     ws.addRow([
-      obj.request_id ?? "",
-      obj.audited_at ?? "",
-      obj.model ?? "",
+      String(obj.request_id ?? ""),
+      String(obj.audited_at ?? ""),
+      String(obj.model ?? ""),
       obj.ok ? "true" : "false",
       audit?.scores?.total ?? "",
-      audit?.risk_level ?? "",
-      audit?.sentiment ?? "",
-      audit?.category ?? "",
-      audit?.summary ?? "",
+      String(audit?.risk_level ?? ""),
+      String(audit?.sentiment ?? ""),
+      String(audit?.category ?? ""),
+      String(audit?.summary ?? "").slice(0, 500), // Truncate long summaries
       Array.isArray(audit?.checks) ? audit.checks.length : "",
-      obj.error ?? "",
+      String(obj.error ?? "").slice(0, 500), // Truncate long errors
     ]).commit();
+
+    rowCount++;
+    // Periodic commit for very large files
+    if (rowCount % BATCH_SIZE === 0) {
+      await new Promise(resolve => setImmediate(resolve)); // Yield to event loop
+    }
   }
 
   wsSummary.commit();

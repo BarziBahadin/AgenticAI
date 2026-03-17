@@ -29,22 +29,138 @@ export type ChatKpis = {
 export async function getChatMessages(request_id: string) {
   const ridNum = BigInt(request_id);
 
+  // Detect columns once
+  const cols = await getChatMessagesColumns();
+  const agentCol = pickAgentColumn(cols);
+  const hasAccountType = cols.has("account_type");
+
+  // Fetch base_requests with all needed fields
+  const brRows = await query<any>(
+    `SELECT 
+      id, requester_name, requester_name_ar, created_at, resolved_at, closed_at,
+      status, issue_category_name, issue_name, attached_agent_id, language, app_name, company_name
+    FROM base_requests WHERE id = ? LIMIT 1`,
+    [ridNum]
+  );
+  const br = brRows[0] ?? null;
+
+  // Fetch chat messages with all needed columns
+  const selectCols = [
+    "id",
+    "request_id",
+    hasAccountType ? "account_type" : "NULL AS account_type",
+    "message",
+    "sent_at",
+    agentCol ? `${agentCol} AS agent_ref` : "NULL AS agent_ref"
+  ].join(", ");
+
   const rows = await query<any>(
-    `SELECT id, request_id, message, sent_at FROM base_chats WHERE request_id = ? ORDER BY sent_at ASC, id ASC`,
+    `SELECT ${selectCols} FROM base_chats WHERE request_id = ? ORDER BY sent_at ASC, id ASC`,
     [ridNum]
   );
 
-  const br = (await query<any>(
-    `SELECT id, created_at FROM base_requests WHERE id = ? LIMIT 1`,
-    [ridNum]
-  ))[0] ?? null;
+  // Compute FRT and resolution metrics
+  const FRT_SLA = envNum("REQUEST_FRT_SLA_SECONDS", 120);
+  const RES_SLA = envNum("REQUEST_RESOLUTION_SLA_SECONDS", 86400);
 
-  // ALWAYS return an object, even if request not found
+  let frt_seconds: number | null = null;
+  let resolution_seconds: number | null = null;
+
+  if (br?.created_at) {
+    const createdAt = new Date(br.created_at);
+    
+    // Find first agent message for FRT
+    const agentTypes = getAgentAccountTypes();
+    for (const row of rows) {
+      const isAgent = agentCol
+        ? row.agent_ref != null
+        : hasAccountType && agentTypes.includes(String(row.account_type ?? "").toLowerCase());
+      
+      if (isAgent) {
+        const sentAt = new Date(row.sent_at);
+        if (sentAt >= createdAt) {
+          frt_seconds = diffSeconds(createdAt, sentAt);
+          break;
+        }
+      }
+    }
+
+    // Resolution time
+    const resolvedAt = br.resolved_at ? new Date(br.resolved_at) : null;
+    const closedAt = br.closed_at ? new Date(br.closed_at) : null;
+    const endAt = resolvedAt ?? closedAt;
+    if (endAt) {
+      resolution_seconds = diffSeconds(createdAt, endAt);
+    }
+  }
+
+  // Get operator usernames for messages
+  const agentIds = rows
+    .map((r: any) => r.agent_ref)
+    .filter((x: any) => x != null)
+    .map((x: any) => String(x));
+  
+  let opMap = new Map<string, string>();
+  if (agentIds.length) {
+    const uniq = Array.from(new Set(agentIds));
+    const ph = uniq.map(() => "?").join(",");
+    const ops = await query<{ id: any; username: any }>(
+      `SELECT id, username FROM base_operators WHERE id IN (${ph})`,
+      uniq
+    );
+    opMap = new Map(ops.map((o) => [String(o.id), String(o.username)]));
+  }
+
+  // Get assigned agent username
+  let assigned_agent_username: string | null = null;
+  if (br?.attached_agent_id) {
+    const assignedOps = await query<{ id: any; username: any }>(
+      `SELECT id, username FROM base_operators WHERE id = ? LIMIT 1`,
+      [br.attached_agent_id]
+    );
+    assigned_agent_username = assignedOps[0] ? String(assignedOps[0].username) : null;
+  }
+
+  // Get handled by agents
+  const handledIds = agentCol
+    ? Array.from(new Set(rows.map((r: any) => r.agent_ref).filter((x: any) => x != null).map((x: any) => String(x))))
+    : [];
+  const handledNames = handledIds.map((id) => opMap.get(id) ?? id);
+  const handled_by_display = handledNames.length ? handledNames.join(", ") : null;
+
+  // Format messages
+  const messages = rows.map((r: any) => ({
+    id: String(r.id),
+    request_id: String(r.request_id),
+    account_type: r.account_type != null ? String(r.account_type) : null,
+    message: String(r.message),
+    sent_at: new Date(r.sent_at).toISOString(),
+    agent_id: r.agent_ref != null ? String(r.agent_ref) : null,
+    agent_username: r.agent_ref != null ? (opMap.get(String(r.agent_ref)) ?? null) : null
+  }));
+
+  const customer_name = br
+    ? String(br.requester_name_ar ?? br.requester_name ?? "").trim() || null
+    : null;
+
   return {
     request_id,
-    request: br,
-    metrics: { frt_seconds: null, resolution_seconds: null },
-    messages: rows ?? []
+    request: br ? {
+      ...br,
+      customer_name,
+      assigned_agent_id: br.attached_agent_id != null ? String(br.attached_agent_id) : null,
+      assigned_agent_username,
+      handled_by_display
+    } : null,
+    metrics: {
+      frt_seconds,
+      resolution_seconds,
+      breach_frt: frt_seconds != null ? frt_seconds > FRT_SLA : null,
+      breach_resolution: resolution_seconds != null ? resolution_seconds > RES_SLA : null,
+      frt_sla_seconds: FRT_SLA,
+      resolution_sla_seconds: RES_SLA
+    },
+    messages
   };
 }
 

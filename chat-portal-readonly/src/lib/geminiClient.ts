@@ -185,7 +185,7 @@ function clampInt0to100(n: unknown): number {
   return Math.trunc(x);
 }
 
-function validateAuditOutput(out: any, transcript: TranscriptMessage[]): AuditOutput {
+export function validateAuditOutput(out: any, transcript: TranscriptMessage[]): AuditOutput {
   if (!out || typeof out !== "object") throw new Error("Gemini audit output is not an object.");
 
   // Basic required fields
