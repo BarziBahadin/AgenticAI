@@ -38,9 +38,34 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1:8b"
+    ollama_model: str = "qwen2.5:14b"
     ollama_timeout: float = 180.0
     ollama_max_retries: int = 1
+
+    # LLM provider selection (ollama | gemini | together)
+    audit_provider: str = "ollama"
+
+    # Gemini (optional cloud provider)
+    gemini_api_key: str = ""
+    gemini_model: str = "auto"
+
+    # Together AI (optional cloud provider)
+    together_api_key: str = ""
+    together_model: str = "meta-llama/Llama-3.1-8B-Instruct-Turbo"
+    together_max_concurrent: int = 2
+    together_timeout: float = 120.0
+
+    # Audit batch job settings
+    audit_max_chats: int = 50
+    audit_max_messages: int = 80
+    audit_max_chars_per_msg: int = 800
+    audit_temperature: float = 0.1
+    audit_max_tokens: int = 900
+    audit_max_concurrent_jobs: int = 1
+
+    # Schema / column detection
+    chat_agent_id_column: str = ""  # override agent column name in base_chats
+    agent_account_types: str = "agent,operator,support,admin"
 
     # QA thresholds
     qa_score_threshold: float = 70.0

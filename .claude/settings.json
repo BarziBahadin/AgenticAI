@@ -4,7 +4,26 @@
       "Bash(grep -E \"\\\\.ts$\")",
       "Bash(sed -i \"s|/Users/barzy/code/audit/CCAI|/Users/barzy/code/audit/backend|g\" /Users/barzy/code/audit/backend/.venv/pyvenv.cfg)",
       "Bash(sed -i \"s|VIRTUAL_ENV=/Users/barzy/code/audit/CCAI/.venv|VIRTUAL_ENV=/Users/barzy/code/audit/backend/.venv|g\" /Users/barzy/code/audit/backend/.venv/bin/activate)",
-      "Bash(xargs sed:*)"
+      "Bash(xargs sed:*)",
+      "Bash(curl -s http://localhost:8000/api/v1/health)",
+      "Bash(python3 -m json.tool echo \"=== CONVERSATIONS ===\")",
+      "Bash(curl -s \"http://localhost:8000/api/v1/conversations/?page=1&page_size=3\")",
+      "Bash(python3 -m json.tool echo \"=== QA STATS ===\")",
+      "Bash(curl -s http://localhost:8000/api/v1/qa/stats/summary)",
+      "Bash(python3 -m json.tool)",
+      "Bash(venv/bin/python3 -c \":*)",
+      "Read(//temp/readonly/**)",
+      "Bash(curl -s \"http://localhost:8000/api/v1/conversations/?page=1&page_size=5\")",
+      "Bash(ping -c 2 -W 2 172.24.0.17)",
+      "Bash(nc -zv 172.24.0.17 11434)",
+      "Bash(curl -s --max-time 5 http://localhost:11434/api/tags)",
+      "Bash(curl -sv --max-time 5 http://localhost:11434/api/tags)",
+      "Bash(curl -s --max-time 8 http://localhost:11434/api/tags)",
+      "Bash(venv/bin/pip install:*)",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/audit/run -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(curl -s \"http://localhost:8000/api/v1/audit/status?job_id=0a57e92e-3331-488b-9551-a825ab2056ef\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); s=d[''''state'''']; print\\(f''''status={s[\"\"status\"\"]} processed={s[\"\"processed\"\"]}/{s[\"\"total_estimate\"\"]} success={s[\"\"success\"\"]} failed={s[\"\"failed\"\"]}''''\\); [print\\(''''  result:'''', r.get\\(''''request_id''''\\), ''''ok='''', r.get\\(''''ok''''\\), r.get\\(''''audit'''',{}\\).get\\(''''scores'''',{}\\)\\) for r in d[''''tail''''][-2:]]\")",
+      "Bash(done)"
     ]
   }
 }
