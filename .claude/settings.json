@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(sed -i \"s|/Users/barzy/code/audit/CCAI|/Users/barzy/code/audit/backend|g\" /Users/barzy/code/audit/backend/.venv/pyvenv.cfg)",
+      "Bash(sed -i \"s|VIRTUAL_ENV=/Users/barzy/code/audit/CCAI/.venv|VIRTUAL_ENV=/Users/barzy/code/audit/backend/.venv|g\" /Users/barzy/code/audit/backend/.venv/bin/activate)",
+      "Bash(xargs sed:*)"
+    ]
+  }
+}

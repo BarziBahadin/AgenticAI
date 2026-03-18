@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install -r requirements.txt)",
+      "Bash(pip3 install -r /Users/barzy/code/audit/backend/requirements.txt)",
+      "Bash(python3 -m venv venv)",
+      "Bash(venv/bin/pip install -r requirements.txt)",
+      "Bash(venv/bin/python -c \"from app.main import app; print\\(''OK''\\)\")",
+      "Bash(venv/bin/python -c \":*)",
+      "Bash(nc -zv 172.16.5.59 3324)",
+      "Bash(ping -c 2 172.16.5.59)",
+      "Bash(curl -s http://localhost:8000/api/v1/conversations/22923/formatted)",
+      "Bash(venv/bin/python -:*)",
+      "Bash(find /Users/barzy/code/audit/backend/app -name \"*.pyc\" -delete)",
+      "Bash(find /Users/barzy/code/audit/backend/app -name \"__pycache__\" -type d -exec rm -rf {} +)",
+      "Bash(python3 -:*)",
+      "Bash(curl -s -H \"Origin: http://localhost\" \"https://qualify-second-conviction-andrew.trycloudflare.com/api/tags\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST \"https://qualify-second-conviction-andrew.trycloudflare.com/api/generate\" -H \"Origin: http://localhost\" -H \"Content-Type: application/json\" -d '{\"\"model\"\":\"\"qwen3.5:35b\"\",\"\"prompt\"\":\"\"/no_think\\\\nRespond with only this JSON: {\\\\\"\"test\\\\\"\": true}\"\",\"\"stream\"\":false,\"\"options\"\":{\"\"temperature\"\":0.1,\"\"num_predict\"\":100}}' )",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(repr\\(d.get\\(''response'',''''\\)\\)\\)\")",
+      "Bash(curl -s -X POST \"https://qualify-second-conviction-andrew.trycloudflare.com/api/generate\" -H \"Origin: http://localhost\" -H \"Content-Type: application/json\" -d '{\"\"model\"\":\"\"qwen3.5:35b\"\",\"\"prompt\"\":\"\"Say hello\"\",\"\"stream\"\":false,\"\"options\"\":{\"\"temperature\"\":0.1,\"\"num_predict\"\":50}}' )",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(repr\\(d.get\\(''response'',''''\\)[:200]\\)\\)\")",
+      "Bash(curl -s -X POST \"https://qualify-second-conviction-andrew.trycloudflare.com/api/generate\" -H \"Origin: http://localhost\" -H \"Content-Type: application/json\" -d '{\"\"model\"\":\"\"qwen3.5:35b\"\",\"\"prompt\"\":\"\"Reply with only valid JSON: {\\\\\"\"ok\\\\\"\": true}\"\",\"\"stream\"\":false,\"\"options\"\":{\"\"temperature\"\":0.1,\"\"num_predict\"\":8192}}' )",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''response:'', repr\\(d.get\\(''response'',''''\\)[:100]\\)\\); print\\(''thinking len:'', len\\(d.get\\(''thinking'',''''\\)\\)\\); print\\(''done_reason:'', d.get\\(''done_reason''\\)\\)\")",
+      "Bash(time curl -s -X POST \"https://qualify-second-conviction-andrew.trycloudflare.com/api/generate\" -H \"Origin: http://localhost\" -H \"Content-Type: application/json\" -d '{:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''response:'', repr\\(d.get\\(''response'',''''\\)\\)\\); print\\(''thinking:'', repr\\(d.get\\(''thinking'',''''\\)[:50]\\)\\)\")",
+      "Bash(curl -s -H \"Origin: http://localhost\" \"https://magnetic-workstation-bull-vacuum.trycloudflare.com/api/tags\")",
+      "Read(//Users/barzy/code/audit/backend/**)",
+      "Bash(wc -l /Users/barzy/code/audit/backend/app/**/*.py /Users/barzy/code/audit/backend/*.py)"
+    ]
+  }
+}
